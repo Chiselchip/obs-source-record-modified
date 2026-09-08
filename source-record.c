@@ -958,6 +958,12 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 	filter->audio_tracks = audio_tracks;
 }
 
+static void update_dock_ui_task(void *param)
+{
+    bool is_paused = (bool)(uintptr_t)param;
+    source_record_dock_set_paused(is_paused);
+}
+
 static void source_record_filter_update(void *data, obs_data_t *settings)
 {
 	struct source_record_filter_context *filter = data;
@@ -1053,16 +1059,12 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 		filter->record = record;
 	}
 
-	if (record && filter->fileOutput && filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_PAUSED &&
-	    !obs_output_paused(filter->fileOutput)) {
-		obs_output_pause(filter->fileOutput, true);
-		source_record_dock_set_paused(true);
-		filter->last_frontend_event = -1;
-	} else if (record && filter->fileOutput && filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_UNPAUSED &&
-		   obs_output_paused(filter->fileOutput)) {
-		obs_output_pause(filter->fileOutput, false);
-		source_record_dock_set_paused(false);
-		filter->last_frontend_event = -1;
+	if (filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_PAUSED) {
+	    obs_queue_task(OBS_TASK_UI, update_dock_ui_task, (void *)(uintptr_t)true, false);
+	    filter->last_frontend_event = -1;
+	} else if (filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_UNPAUSED) {
+	    obs_queue_task(OBS_TASK_UI, update_dock_ui_task, (void *)(uintptr_t)false, false);
+	    filter->last_frontend_event = -1;
 	}
 
 	if (replay_buffer != filter->replayBuffer) {
