@@ -9,8 +9,6 @@ endif()
 project(source-record VERSION 0.4.8)
 set(PROJECT_FULL_NAME "Source Record")
 
-find_package(Qt6 COMPONENTS Widgets REQUIRED)
-
 # Set new UUIDs when you start to create a new plugin.
 set(MACOS_PACKAGE_UUID "3EC43C98-466F-4B74-8CB4-17B90EB0B29F")
 set(MACOS_INSTALLER_UUID "599A0945-8DDB-4E81-8A4D-C399D04BCCC5")
@@ -21,7 +19,6 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_D
 
 target_sources(${PROJECT_NAME} PRIVATE
 	source-record.c
-	source-record-dock.cpp
 	source-record.h)
 
 
@@ -60,8 +57,6 @@ endif()
 
 target_link_libraries(${PROJECT_NAME}
 	OBS::${OBS_FRONTEND_API_NAME}
-	obs-frontend-api
-	Qt6::Widgets
 	OBS::libobs)
 
 if(BUILD_OUT_OF_TREE)
