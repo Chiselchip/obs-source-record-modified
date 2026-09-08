@@ -47,7 +47,7 @@ struct source_record_filter_context {
 	obs_hotkey_pair_id pauseHotkeys;
 	obs_hotkey_id splitHotkey;
 	obs_hotkey_id chapterHotkey;
-	int audio_track;
+	uint32_t audio_tracks;
 	obs_weak_source_t *audio_source;
 	bool closing;
 	bool exiting;
@@ -271,11 +271,18 @@ static const char *GetFormatExt(const char *format)
 static void start_file_output_task(void *data)
 {
 	struct source_record_filter_context *context = data;
+	obs_source_t *parent = obs_filter_get_parent(context->source);
+	bool showing_added = false;
+	if (!context->output_active && parent) {
+		obs_source_inc_showing(parent);
+		showing_added = true;
+	}
 	if (obs_output_start(context->fileOutput)) {
 		if (!context->output_active) {
 			context->output_active = true;
-			obs_source_inc_showing(obs_filter_get_parent(context->source));
 		}
+	} else if (showing_added) {
+		obs_source_dec_showing(parent);
 	}
 	context->starting_file_output = false;
 }
@@ -283,11 +290,18 @@ static void start_file_output_task(void *data)
 static void start_stream_output_task(void *data)
 {
 	struct source_record_filter_context *context = data;
+	obs_source_t *parent = obs_filter_get_parent(context->source);
+	bool showing_added = false;
+	if (!context->output_active && parent) {
+		obs_source_inc_showing(parent);
+		showing_added = true;
+	}
 	if (obs_output_start(context->streamOutput)) {
 		if (!context->output_active) {
 			context->output_active = true;
-			obs_source_inc_showing(obs_filter_get_parent(context->source));
 		}
+	} else if (showing_added) {
+		obs_source_dec_showing(parent);
 	}
 	context->starting_stream_output = false;
 }
@@ -390,11 +404,18 @@ static void force_stop_output_task(void *data)
 static void start_replay_task(void *data)
 {
 	struct source_record_filter_context *context = data;
+	obs_source_t *parent = obs_filter_get_parent(context->source);
+	bool showing_added = false;
+	if (!context->output_active && parent) {
+		obs_source_inc_showing(parent);
+		showing_added = true;
+	}
 	if (obs_output_start(context->replayOutput)) {
 		if (!context->output_active) {
 			context->output_active = true;
-			obs_source_inc_showing(obs_filter_get_parent(context->source));
 		}
+	} else if (showing_added) {
+		obs_source_dec_showing(parent);
 	}
 	context->starting_replay_output = false;
 }
@@ -747,6 +768,59 @@ static void set_encoder_defaults(obs_data_t *settings)
 	}
 }
 
+static uint32_t get_audio_tracks(obs_data_t *settings)
+{
+	uint32_t tracks = 0;
+	bool has_new_setting = false;
+
+	for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "audio_track_%d", i + 1);
+		if (obs_data_has_user_value(settings, name)) {
+			has_new_setting = true;
+			if (obs_data_get_bool(settings, name))
+				tracks |= 1u << i;
+		}
+	}
+
+	/* Migrate the old single-track setting when this is an existing
+	 * Source Record configuration. -1 meant all tracks. */
+	if (!has_new_setting && obs_data_has_user_value(settings, "audio_track")) {
+		const int legacy_track = (int)obs_data_get_int(settings, "audio_track");
+		if (legacy_track == -1) {
+			tracks = (1u << MAX_AUDIO_MIXES) - 1u;
+		} else if (legacy_track > 0 && legacy_track <= MAX_AUDIO_MIXES) {
+			tracks = 1u << (legacy_track - 1);
+		}
+	}
+
+	return tracks;
+}
+
+static void migrate_audio_track_settings(obs_data_t *settings)
+{
+	bool has_new_setting = false;
+	for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "audio_track_%d", i + 1);
+		if (obs_data_has_user_value(settings, name)) {
+			has_new_setting = true;
+			break;
+		}
+	}
+
+	if (has_new_setting || !obs_data_has_user_value(settings, "audio_track"))
+		return;
+
+	const int legacy_track = (int)obs_data_get_int(settings, "audio_track");
+	for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "audio_track_%d", i + 1);
+		const bool selected = legacy_track == -1 || legacy_track == i + 1;
+		obs_data_set_bool(settings, name, selected);
+	}
+}
+
 static void update_encoder(struct source_record_filter_context *filter, obs_data_t *settings)
 {
 	const char *enc_id = get_encoder_id(settings);
@@ -791,14 +865,16 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 		obs_encoder_set_video(filter->encoder, filter->video_output);
 		obs_encoder_update(filter->encoder, settings);
 	}
-	const int audio_track = obs_data_get_bool(settings, "different_audio") ? (int)obs_data_get_int(settings, "audio_track") : 0;
+	const uint32_t audio_tracks = obs_data_get_bool(settings, "different_audio")
+					     ? get_audio_tracks(settings)
+					     : 0;
 	if (filter->closing) {
-		if (filter->audio_track == 0 && filter->audio_output) {
+		if (filter->audio_tracks == 0 && filter->audio_output) {
 			audio_output_close(filter->audio_output);
 			filter->audio_output = NULL;
 		}
 	} else if (!filter->audio_output) {
-		if (audio_track > 0 || audio_track == -1) {
+		if (audio_tracks != 0) {
 			filter->audio_output = obs_get_audio();
 		} else {
 			struct audio_output_info oi = {0};
@@ -810,10 +886,10 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 			oi.input_callback = audio_input_callback;
 			audio_output_open(&filter->audio_output, &oi);
 		}
-	} else if (audio_track > 0 && filter->audio_track == 0) {
+	} else if (audio_tracks != 0 && filter->audio_tracks == 0) {
 		audio_output_close(filter->audio_output);
 		filter->audio_output = obs_get_audio();
-	} else if (audio_track == 0 && filter->audio_track > 0) {
+	} else if (audio_tracks == 0 && filter->audio_tracks != 0) {
 		filter->audio_output = NULL;
 		struct audio_output_info oi = {0};
 		oi.name = obs_source_get_name(filter->source);
@@ -825,7 +901,14 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 		audio_output_open(&filter->audio_output, &oi);
 	}
 
-	if (!filter->audioEncoder[0] || filter->audio_track != audio_track) {
+	bool audio_encoder_missing = true;
+	for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+		if (filter->audioEncoder[i]) {
+			audio_encoder_missing = false;
+			break;
+		}
+	}
+	if (audio_encoder_missing || filter->audio_tracks != audio_tracks) {
 		for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
 			if (!filter->audioEncoder[i])
 				continue;
@@ -840,21 +923,24 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 		if (obs_data_has_user_value(settings, "audio_bitrate") || obs_data_has_default_value(settings, "audio_bitrate")) {
 			obs_data_set_int(audio_settings, "bitrate", obs_data_get_int(settings, "audio_bitrate"));
 		}
-		if (audio_track > 0) {
-			filter->audioEncoder[0] = obs_audio_encoder_create(enc_id, obs_source_get_name(filter->source),
-									   audio_settings, audio_track - 1, NULL);
-		} else if (audio_track == -1) {
-			struct dstr name;
-			dstr_init(&name);
+
+		if (audio_tracks != 0) {
 			for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+				if ((audio_tracks & (1u << i)) == 0)
+					continue;
+
+				struct dstr name;
+				dstr_init(&name);
 				dstr_printf(&name, "%s track %d", obs_source_get_name(filter->source), i + 1);
-				filter->audioEncoder[i] = obs_audio_encoder_create(enc_id, name.array, audio_settings, i, NULL);
+				filter->audioEncoder[i] =
+					obs_audio_encoder_create(enc_id, name.array, audio_settings, i, NULL);
+				dstr_free(&name);
 			}
-			dstr_free(&name);
 		} else {
 			filter->audioEncoder[0] =
 				obs_audio_encoder_create(enc_id, obs_source_get_name(filter->source), audio_settings, 0, NULL);
 		}
+
 		obs_data_release(audio_settings);
 		for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
 			if (!filter->audioEncoder[i])
@@ -868,12 +954,12 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 				obs_output_set_audio_encoder(filter->replayOutput, filter->audioEncoder[i], i);
 		}
 	}
-	filter->audio_track = audio_track;
-}
+	filter->audio_tracks = audio_tracks;
 
 static void source_record_filter_update(void *data, obs_data_t *settings)
 {
 	struct source_record_filter_context *filter = data;
+	migrate_audio_track_settings(settings);
 	obs_source_t *parent = obs_filter_get_parent(filter->source);
 	if (obs_obj_is_private(parent)) {
 		filter->closing = true;
@@ -1131,6 +1217,12 @@ static void source_record_filter_defaults(obs_data_t *settings)
 				    config_get_string(config, adv_out ? "AdvOut" : "SimpleOutput", "RecFormat2"));
 
 	obs_data_set_default_int(settings, "backgroundColor", 0);
+	obs_data_set_default_bool(settings, "audio_track_1", true);
+	for (int i = 1; i < MAX_AUDIO_MIXES; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "audio_track_%d", i + 1);
+		obs_data_set_default_bool(settings, name, false);
+	}
 
 	const char *enc_id;
 	if (adv_out) {
@@ -1252,7 +1344,7 @@ static void source_record_filter_destroy(void *data)
 	obs_weak_source_release(context->audio_source);
 	context->audio_source = NULL;
 
-	if (context->audio_track == 0 && context->audio_output)
+	if (context->audio_tracks == 0 && context->audio_output)
 		audio_output_close(context->audio_output);
 	context->audio_output = NULL;
 
@@ -1742,14 +1834,12 @@ static obs_properties_t *source_record_filter_properties(void *data)
 
 	obs_properties_t *audio = obs_properties_create();
 
-	p = obs_properties_add_list(audio, "audio_track", obs_module_text("AudioTrack"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, obs_module_text("None"), 0);
-	obs_property_list_add_int(p, obs_module_text("All"), -1);
-	const char *track = obs_module_text("Track");
-	for (int i = 1; i <= MAX_AUDIO_MIXES; i++) {
-		char buffer[64];
-		snprintf(buffer, 64, "%s %i", track, i);
-		obs_property_list_add_int(p, buffer, i);
+	for (int i = 0; i < MAX_AUDIO_MIXES; i++) {
+		char name[32];
+		char description[64];
+		snprintf(name, sizeof(name), "audio_track_%d", i + 1);
+		snprintf(description, sizeof(description), "%s %d", obs_module_text("Track"), i + 1);
+		obs_properties_add_bool(audio, name, description);
 	}
 
 	p = obs_properties_add_list(audio, "audio_source", obs_module_text("Source"), OBS_COMBO_TYPE_EDITABLE,
