@@ -6,6 +6,7 @@
 #include <util/dstr.h>
 #include "version.h"
 #include "obs-websocket-api.h"
+#include "source-record-dock.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -1055,10 +1056,12 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 	if (record && filter->fileOutput && filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_PAUSED &&
 	    !obs_output_paused(filter->fileOutput)) {
 		obs_output_pause(filter->fileOutput, true);
+		source_record_dock_set_paused(true);
 		filter->last_frontend_event = -1;
 	} else if (record && filter->fileOutput && filter->last_frontend_event == OBS_FRONTEND_EVENT_RECORDING_UNPAUSED &&
 		   obs_output_paused(filter->fileOutput)) {
 		obs_output_pause(filter->fileOutput, false);
+		source_record_dock_set_paused(false);
 		filter->last_frontend_event = -1;
 	}
 
@@ -2707,6 +2710,7 @@ bool obs_module_load(void)
 	obs_websocket_vendor_register_request(vendor, "replay_buffer_save", websocket_save_replay_buffer, NULL);
 	obs_websocket_vendor_register_request(vendor, "stream_start", websocket_start_stream, NULL);
 	obs_websocket_vendor_register_request(vendor, "stream_stop", websocket_stop_stream, NULL);
+	source_record_dock_init();
 
 	return true;
 }
