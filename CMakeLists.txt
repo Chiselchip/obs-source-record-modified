@@ -15,17 +15,11 @@ set(MACOS_INSTALLER_UUID "599A0945-8DDB-4E81-8A4D-C399D04BCCC5")
 
 add_library(${PROJECT_NAME} MODULE)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
-
-set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
-
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
 target_sources(${PROJECT_NAME} PRIVATE
 	source-record.c
-	source-record.h
-	source-record-status.cpp
-	source-record-status.h)
+	source-record.h)
 
 
 if(BUILD_OUT_OF_TREE)
@@ -63,8 +57,7 @@ endif()
 
 target_link_libraries(${PROJECT_NAME}
 	OBS::${OBS_FRONTEND_API_NAME}
-	OBS::libobs
-	Qt6::Widgets)
+	OBS::libobs)
 
 if(BUILD_OUT_OF_TREE)
     if(NOT LIB_OUT_DIR)
