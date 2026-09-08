@@ -6,6 +6,7 @@
 #include <util/dstr.h>
 #include "version.h"
 #include "obs-websocket-api.h"
+#include "source-record-dock.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -2694,6 +2695,7 @@ bool obs_module_load(void)
 	obs_register_source(&source_record_filter_info);
 
 	da_init(source_record_filters);
+	source_record_dock_create();
 
 	vendor = obs_websocket_register_vendor("source-record");
 	obs_websocket_vendor_register_request(vendor, "record_start", websocket_start_record, NULL);
@@ -2727,8 +2729,10 @@ void obs_module_post_load(void)
 	}
 }
 
+bool obs_module_load(void)
 void obs_module_unload(void)
 {
+	source_record_dock_destroy();
 	da_free(source_record_filters);
 }
 
