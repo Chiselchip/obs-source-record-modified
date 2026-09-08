@@ -286,8 +286,6 @@ static void start_file_output_task(void *data)
 	} else if (showing_added) {
 		obs_source_dec_showing(parent);
 	}
-	if (!context->output_active)
-		source_record_status_update(context, obs_source_get_name(context->source), false, false);
 	context->starting_file_output = false;
 }
 
@@ -304,6 +302,7 @@ static void start_stream_output_task(void *data)
 		if (!context->output_active) {
 			context->output_active = true;
 		}
+		source_record_status_update(context, obs_source_get_name(context->source), true, false);
 	} else if (showing_added) {
 		obs_source_dec_showing(parent);
 	}
@@ -418,6 +417,7 @@ static void start_replay_task(void *data)
 		if (!context->output_active) {
 			context->output_active = true;
 		}
+		source_record_status_update(context, obs_source_get_name(context->source), true, false);
 	} else if (showing_added) {
 		obs_source_dec_showing(parent);
 	}
@@ -1042,9 +1042,7 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 		if (record) {
 			if (obs_source_enabled(filter->source) && filter->video_output)
 				start_file_output(filter, settings);
-		} else {
-			source_record_status_update(filter, obs_source_get_name(filter->source), false, false);
-			if (filter->fileOutput) {
+		} else if (filter->fileOutput) {
 			if (filter->closing) {
 				stop_output_sync(filter, filter->fileOutput);
 			} else {
@@ -1054,8 +1052,9 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 				run_queued(force_stop_output_task, so);
 				filter->fileOutput = NULL;
 			}
-			}
 		}
+		if (!record)
+			source_record_status_update(filter, obs_source_get_name(filter->source), false, false);
 		filter->record = record;
 	}
 
@@ -2743,8 +2742,8 @@ void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
-	source_record_status_shutdown();
 	da_free(source_record_filters);
+	source_record_status_shutdown();
 }
 
 const char *obs_module_name(void)
