@@ -955,6 +955,7 @@ static void update_encoder(struct source_record_filter_context *filter, obs_data
 		}
 	}
 	filter->audio_tracks = audio_tracks;
+}
 
 static void source_record_filter_update(void *data, obs_data_t *settings)
 {
