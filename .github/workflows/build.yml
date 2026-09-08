@@ -8,7 +8,7 @@ on:
 
 env:
   PLUGIN_NAME: source-record
-  OBS_VERSION: 32.2.2
+  OBS_VERSION: 29.0.0-beta1
 jobs:
   macos:
     name: macOS
@@ -37,7 +37,6 @@ jobs:
         uses: actions/checkout@v4.1.1
         with:
           repository: 'obsproject/obs-studio'
-          ref: ${{ env.OBS_VERSION }}
           path: obs-studio
           fetch-depth: 0
           submodules: recursive
@@ -192,7 +191,7 @@ jobs:
             cmake_build: 'Win32'
             deps_ext: '32'
     env:
-      QT_VERSION: '6.3.3'
+      QT_VERSION: '6.3.1'
       CMAKE_GENERATOR: "Visual Studio 17 2022"
       CMAKE_SYSTEM_VERSION: "10.0.18363.657"
       WINDOWS_DEPS_VERSION: '2022-08-02'
