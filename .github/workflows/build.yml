@@ -37,6 +37,7 @@ jobs:
         uses: actions/checkout@v4.1.1
         with:
           repository: 'obsproject/obs-studio'
+          ref: ${{ env.OBS_VERSION }}
           path: obs-studio
           fetch-depth: 0
           submodules: recursive
