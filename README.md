@@ -1,4 +1,4 @@
-# Source Record filter for OBS Studio
+# Source Record filter for OBS Studio Modified to Include Multiple Simultaneous Audio Tracks and Functionality on Game Capture Source 
 
 Plugin for OBS Studio to make sources available to record via a filter
 
