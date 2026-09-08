@@ -7,8 +7,8 @@
 
 static QLabel* g_statusLabel = nullptr;
 
-extern "C" void source_record_dock_init(void) {
-    if (g_statusLabel) return; // Prevent double initialization
+static void create_dock(void) {
+    if (g_statusLabel) return;
 
     QDockWidget* dock = new QDockWidget("Source Record Status");
     dock->setObjectName("sourceRecordStatusDock");
@@ -24,8 +24,17 @@ extern "C" void source_record_dock_init(void) {
     container->setLayout(layout);
     dock->setWidget(container);
 
-    // Binds the dock natively into the OBS View -> Docks menu
-    obs_frontend_add_dock(dock); 
+    obs_frontend_add_dock(dock);
+}
+
+static void on_frontend_event(enum obs_frontend_event event, void* private_data) {
+    if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+        create_dock();
+    }
+}
+
+extern "C" void source_record_dock_init(void) {
+    obs_frontend_add_event_callback(on_frontend_event, nullptr);
 }
 
 extern "C" void source_record_dock_set_paused(bool is_paused) {
