@@ -6,7 +6,6 @@
 #include <util/dstr.h>
 #include "version.h"
 #include "obs-websocket-api.h"
-#include "source-record-dock.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -2689,85 +2688,14 @@ static void websocket_stop_stream(obs_data_t *request_data, obs_data_t *response
 	obs_data_set_bool(response_data, "success", success);
 }
 
-void source_record_get_status(char *buffer, size_t buffer_size)
-{
-    if (!buffer || buffer_size == 0)
-        return;
-
-    buffer[0] = '\0';
-
-    size_t used = 0;
-    bool found = false;
-
-    for (size_t i = 0; i < source_record_filters.num; i++) {
-        obs_source_t *filter_source =
-            source_record_filters.array[i];
-
-        if (!filter_source)
-            continue;
-
-        struct source_record_filter_context *context =
-            obs_obj_get_data(filter_source);
-
-        if (!context ||
-            !context->fileOutput ||
-            !obs_output_active(context->fileOutput))
-            continue;
-
-        obs_source_t *parent =
-            obs_filter_get_parent(filter_source);
-
-        const char *name =
-            parent
-                ? obs_source_get_name(parent)
-                : obs_source_get_name(filter_source);
-
-        const bool paused =
-            obs_output_paused(context->fileOutput);
-
-        const char *state =
-            paused ? "PAUSED" : "RECORDING";
-
-        int written = snprintf(
-            buffer + used,
-            buffer_size - used,
-            "%s[%s] %s",
-            found ? "\n" : "",
-            state,
-            name ? name : "Source Record"
-        );
-
-        if (written < 0)
-            break;
-
-        if ((size_t)written >= buffer_size - used) {
-            used = buffer_size - 1;
-            buffer[used] = '\0';
-            break;
-        }
-
-        used += (size_t)written;
-        found = true;
-    }
-
-    if (!found) {
-        snprintf(
-            buffer,
-            buffer_size,
-            "No Source Record recording active"
-        );
-    }
-}
-
 bool obs_module_load(void)
 {
-    blog(LOG_INFO, "[Source Record] loaded version %s", PROJECT_VERSION);
-    obs_register_source(&source_record_filter_info);
+	blog(LOG_INFO, "[Source Record] loaded version %s", PROJECT_VERSION);
+	obs_register_source(&source_record_filter_info);
 
-    da_init(source_record_filters);
-    source_record_dock_create();
+	da_init(source_record_filters);
 
-    vendor = obs_websocket_register_vendor("source-record");
+	vendor = obs_websocket_register_vendor("source-record");
 	obs_websocket_vendor_register_request(vendor, "record_start", websocket_start_record, NULL);
 	obs_websocket_vendor_register_request(vendor, "record_pause", websocket_pause_record, NULL);
 	obs_websocket_vendor_register_request(vendor, "record_unpause", websocket_unpause_record, NULL);
@@ -2801,7 +2729,6 @@ void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
-	source_record_dock_destroy();
 	da_free(source_record_filters);
 }
 
