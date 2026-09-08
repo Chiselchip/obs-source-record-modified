@@ -56,6 +56,13 @@ struct source_record_filter_context {
 	bool remove_after_record;
 	long long record_max_seconds;
 	int last_frontend_event;
+
+	/* Last state broadcast via the "source_record_status" obs-websocket
+	 * vendor event; see emit_status_event(). */
+	bool last_status_recording;
+	bool last_status_paused;
+	bool last_status_streaming;
+	bool last_status_replaying;
 };
 
 DARRAY(obs_source_t *) source_record_filters;
@@ -1456,6 +1463,48 @@ static void source_record_chapter_hotkey(void *data, obs_hotkey_id id, obs_hotke
 	calldata_free(&cd);
 }
 
+/* Emits an obs-websocket vendor event ("source_record_status") whenever
+ * this filter's recording/pause/stream/replay-buffer state changes, so an
+ * external dock/overlay can reflect it without polling the plugin. Pass
+ * force=true to always emit, e.g. so a dock that just connected can get an
+ * immediate snapshot instead of waiting for the next state change.
+ *
+ * "recording" mirrors filter->record (the mode logic's own idea of whether
+ * it should currently be recording) rather than obs_output_active(), so it
+ * agrees with everything else this file already uses that flag for, and it
+ * naturally reads back false during the brief windows where fileOutput has
+ * already been torn down/nulled but the flag hasn't been reset yet. */
+static void emit_status_event(struct source_record_filter_context *context, bool force)
+{
+	if (!vendor || !context->source)
+		return;
+
+	const bool recording = context->fileOutput != NULL && context->record;
+	const bool paused = recording && obs_output_paused(context->fileOutput);
+	const bool streaming = context->streamOutput != NULL && context->stream;
+	const bool replaying = context->replayOutput != NULL && context->replayBuffer;
+
+	if (!force && recording == context->last_status_recording && paused == context->last_status_paused &&
+	    streaming == context->last_status_streaming && replaying == context->last_status_replaying)
+		return;
+
+	context->last_status_recording = recording;
+	context->last_status_paused = paused;
+	context->last_status_streaming = streaming;
+	context->last_status_replaying = replaying;
+
+	obs_data_t *event_data = obs_data_create();
+	obs_source_t *parent = obs_filter_get_parent(context->source);
+	obs_data_set_string(event_data, "filter", obs_source_get_name(context->source));
+	obs_data_set_string(event_data, "source", parent ? obs_source_get_name(parent) : "");
+	obs_data_set_bool(event_data, "recording", recording);
+	obs_data_set_bool(event_data, "paused", paused);
+	obs_data_set_bool(event_data, "streaming", streaming);
+	obs_data_set_bool(event_data, "replay_buffer", replaying);
+	obs_websocket_vendor_emit_event(vendor, "source_record_status", event_data);
+	obs_data_release(event_data);
+}
+
 static void source_record_filter_tick(void *data, float seconds)
 {
 	UNUSED_PARAMETER(seconds);
@@ -1652,6 +1701,8 @@ static void source_record_filter_tick(void *data, float seconds)
 			obs_data_release(settings);
 		}
 	}
+
+	emit_status_event(context, false);
 }
 
 static void all_properties_changed(obs_properties_t *props, obs_data_t *settings)
@@ -2586,6 +2637,70 @@ static void websocket_save_replay_buffer(obs_data_t *request_data, obs_data_t *r
 	obs_data_set_bool(response_data, "success", success);
 }
 
+static bool status_response_for_filter(obs_source_t *filter, obs_data_t *response_data)
+{
+	struct source_record_filter_context *context = obs_obj_get_data(filter);
+	if (!context)
+		return false;
+
+	const bool recording = context->fileOutput != NULL && context->record;
+	const bool paused = recording && obs_output_paused(context->fileOutput);
+	const bool streaming = context->streamOutput != NULL && context->stream;
+	const bool replaying = context->replayOutput != NULL && context->replayBuffer;
+
+	obs_data_set_bool(response_data, "recording", recording);
+	obs_data_set_bool(response_data, "paused", paused);
+	obs_data_set_bool(response_data, "streaming", streaming);
+	obs_data_set_bool(response_data, "replay_buffer", replaying);
+	return true;
+}
+
+/* get_status: with a "source" (and optional "filter") in request_data,
+ * returns that one filter's status directly on response_data. With no
+ * source given, returns every known Source Record filter instance as a
+ * "sources" array, each entry tagged with its filter/source name - this is
+ * what a dock with no configuration should call on connect. */
+static void websocket_get_status(obs_data_t *request_data, obs_data_t *response_data, void *param)
+{
+	UNUSED_PARAMETER(param);
+	const char *source_name = obs_data_get_string(request_data, "source");
+
+	if (strlen(source_name)) {
+		obs_source_t *source = obs_get_source_by_name(source_name);
+		if (!source) {
+			obs_data_set_string(response_data, "error", "source not found");
+			obs_data_set_bool(response_data, "success", false);
+			return;
+		}
+		obs_source_t *filter = get_source_record_filter(source, request_data, response_data, false);
+		obs_source_release(source);
+		if (!filter) {
+			obs_data_set_bool(response_data, "success", false);
+			return;
+		}
+		obs_data_set_string(response_data, "filter", obs_source_get_name(filter));
+		bool success = status_response_for_filter(filter, response_data);
+		obs_source_release(filter);
+		obs_data_set_bool(response_data, "success", success);
+		return;
+	}
+
+	obs_data_array_t *arr = obs_data_array_create();
+	for (size_t i = 0; i < source_record_filters.num; i++) {
+		obs_source_t *filter = source_record_filters.array[i];
+		obs_data_t *item = obs_data_create();
+		obs_source_t *parent = obs_filter_get_parent(filter);
+		obs_data_set_string(item, "filter", obs_source_get_name(filter));
+		obs_data_set_string(item, "source", parent ? obs_source_get_name(parent) : "");
+		status_response_for_filter(filter, item);
+		obs_data_array_push_back(arr, item);
+		obs_data_release(item);
+	}
+	obs_data_set_array(response_data, "sources", arr);
+	obs_data_array_release(arr);
+	obs_data_set_bool(response_data, "success", true);
+}
+
 static bool start_stream_source(obs_source_t *source, obs_data_t *request_data, obs_data_t *response_data)
 {
 	obs_source_t *filter = get_source_record_filter(source, request_data, response_data, true);
@@ -2707,6 +2822,7 @@ bool obs_module_load(void)
 	obs_websocket_vendor_register_request(vendor, "replay_buffer_save", websocket_save_replay_buffer, NULL);
 	obs_websocket_vendor_register_request(vendor, "stream_start", websocket_start_stream, NULL);
 	obs_websocket_vendor_register_request(vendor, "stream_stop", websocket_stop_stream, NULL);
+	obs_websocket_vendor_register_request(vendor, "get_status", websocket_get_status, NULL);
 
 	return true;
 }
