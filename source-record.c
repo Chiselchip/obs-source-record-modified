@@ -2729,7 +2729,6 @@ void obs_module_post_load(void)
 	}
 }
 
-bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	source_record_dock_destroy();
