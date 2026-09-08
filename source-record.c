@@ -1473,46 +1473,7 @@ static void source_record_chapter_hotkey(void *data, obs_hotkey_id id, obs_hotke
  * it should currently be recording) rather than obs_output_active(), so it
  * agrees with everything else this file already uses that flag for, and it
  * naturally reads back false during the brief windows where fileOutput has
- * already been torn down/nulled but the flag hasn't been reset yet.
- *
- * The obs_data_t build + obs_websocket_vendor_emit_event() call are done on
- * a queued task rather than inline: this function is reached from
- * source_record_filter_tick(), i.e. the video/graphics thread, and every
- * other emit_event call in this file (source_record_replay_saved) fires
- * from an output signal callback instead. Keeping that invariant means we
- * never add unknown-cost work (allocation, JSON building, obs-websocket's
- * internal locking) to the render path. Only the cheap bool comparisons
- * below stay inline. The task copies out plain data (bstrdup'd names, not
- * the context/source pointers), so it stays safe to run later even if the
- * filter is destroyed in the meantime. */
-struct status_event_data {
-	char *filter_name;
-	char *source_name;
-	bool recording;
-	bool paused;
-	bool streaming;
-	bool replaying;
-};
-
-static void emit_status_event_task(void *data)
-{
-	struct status_event_data *ev = data;
-	if (vendor) {
-		obs_data_t *event_data = obs_data_create();
-		obs_data_set_string(event_data, "filter", ev->filter_name);
-		obs_data_set_string(event_data, "source", ev->source_name);
-		obs_data_set_bool(event_data, "recording", ev->recording);
-		obs_data_set_bool(event_data, "paused", ev->paused);
-		obs_data_set_bool(event_data, "streaming", ev->streaming);
-		obs_data_set_bool(event_data, "replay_buffer", ev->replaying);
-		obs_websocket_vendor_emit_event(vendor, "source_record_status", event_data);
-		obs_data_release(event_data);
-	}
-	bfree(ev->filter_name);
-	bfree(ev->source_name);
-	bfree(ev);
-}
-
+ * already been torn down/nulled but the flag hasn't been reset yet. */
 static void emit_status_event(struct source_record_filter_context *context, bool force)
 {
 	if (!vendor || !context->source)
@@ -1532,15 +1493,16 @@ static void emit_status_event(struct source_record_filter_context *context, bool
 	context->last_status_streaming = streaming;
 	context->last_status_replaying = replaying;
 
+	obs_data_t *event_data = obs_data_create();
 	obs_source_t *parent = obs_filter_get_parent(context->source);
-	struct status_event_data *ev = bmalloc(sizeof(struct status_event_data));
-	ev->filter_name = bstrdup(obs_source_get_name(context->source));
-	ev->source_name = bstrdup(parent ? obs_source_get_name(parent) : "");
-	ev->recording = recording;
-	ev->paused = paused;
-	ev->streaming = streaming;
-	ev->replaying = replaying;
-	run_queued(emit_status_event_task, ev);
+	obs_data_set_string(event_data, "filter", obs_source_get_name(context->source));
+	obs_data_set_string(event_data, "source", parent ? obs_source_get_name(parent) : "");
+	obs_data_set_bool(event_data, "recording", recording);
+	obs_data_set_bool(event_data, "paused", paused);
+	obs_data_set_bool(event_data, "streaming", streaming);
+	obs_data_set_bool(event_data, "replay_buffer", replaying);
+	obs_websocket_vendor_emit_event(vendor, "source_record_status", event_data);
+	obs_data_release(event_data);
 }
 
 static void source_record_filter_tick(void *data, float seconds)
