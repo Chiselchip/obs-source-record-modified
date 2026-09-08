@@ -6,6 +6,7 @@
 #include <util/dstr.h>
 #include "version.h"
 #include "obs-websocket-api.h"
+#include "source-record-status.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -281,9 +282,12 @@ static void start_file_output_task(void *data)
 		if (!context->output_active) {
 			context->output_active = true;
 		}
+		source_record_status_update(context, obs_source_get_name(context->source), true, false);
 	} else if (showing_added) {
 		obs_source_dec_showing(parent);
 	}
+	if (!context->output_active)
+		source_record_status_update(context, obs_source_get_name(context->source), false, false);
 	context->starting_file_output = false;
 }
 
@@ -1038,7 +1042,9 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 		if (record) {
 			if (obs_source_enabled(filter->source) && filter->video_output)
 				start_file_output(filter, settings);
-		} else if (filter->fileOutput) {
+		} else {
+			source_record_status_update(filter, obs_source_get_name(filter->source), false, false);
+			if (filter->fileOutput) {
 			if (filter->closing) {
 				stop_output_sync(filter, filter->fileOutput);
 			} else {
@@ -1047,6 +1053,7 @@ static void source_record_filter_update(void *data, obs_data_t *settings)
 				so->context = filter;
 				run_queued(force_stop_output_task, so);
 				filter->fileOutput = NULL;
+			}
 			}
 		}
 		filter->record = record;
@@ -1295,6 +1302,7 @@ static void *source_record_filter_create(obs_data_t *settings, obs_source_t *sou
 	context->splitHotkey = OBS_INVALID_HOTKEY_ID;
 	context->chapterHotkey = OBS_INVALID_HOTKEY_ID;
 	source_record_filter_update(context, settings);
+	source_record_status_update(context, obs_source_get_name(source), false, false);
 	obs_frontend_add_event_callback(frontend_event, context);
 	return context;
 }
@@ -1311,6 +1319,7 @@ static void source_record_filter_destroy(void *data)
 		context->output_active = false;
 	}
 	obs_frontend_remove_event_callback(frontend_event, context);
+	source_record_status_remove(context);
 
 	stop_output_sync(context, context->fileOutput);
 	stop_output_sync(context, context->streamOutput);
@@ -1407,6 +1416,7 @@ static bool source_record_pause_hotkey(void *data, obs_hotkey_pair_id id, obs_ho
 		return false;
 
 	obs_output_pause(context->fileOutput, true);
+	source_record_status_update(context, obs_source_get_name(context->source), true, true);
 	return true;
 }
 
@@ -1421,6 +1431,7 @@ static bool source_record_unpause_hotkey(void *data, obs_hotkey_pair_id id, obs_
 		return false;
 
 	obs_output_pause(context->fileOutput, false);
+	source_record_status_update(context, obs_source_get_name(context->source), true, false);
 	return true;
 }
 
@@ -2157,6 +2168,7 @@ static bool pause_record_source(obs_source_t *source, obs_data_t *request_data, 
 	if (!context->fileOutput)
 		return false;
 	obs_output_pause(context->fileOutput, true);
+	source_record_status_update(context, obs_source_get_name(context->source), true, true);
 	return true;
 }
 
@@ -2171,6 +2183,7 @@ static bool unpause_record_source(obs_source_t *source, obs_data_t *request_data
 	if (!context->fileOutput)
 		return false;
 	obs_output_pause(context->fileOutput, false);
+	source_record_status_update(context, obs_source_get_name(context->source), true, false);
 	return true;
 }
 
@@ -2692,6 +2705,7 @@ bool obs_module_load(void)
 {
 	blog(LOG_INFO, "[Source Record] loaded version %s", PROJECT_VERSION);
 	obs_register_source(&source_record_filter_info);
+	source_record_status_init();
 
 	da_init(source_record_filters);
 
@@ -2729,6 +2743,7 @@ void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
+	source_record_status_shutdown();
 	da_free(source_record_filters);
 }
 
